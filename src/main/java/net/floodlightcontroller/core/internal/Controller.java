@@ -167,7 +167,7 @@ public class Controller implements IFloodlightProviderService,
 
     // Configuration options
     protected String openFlowHost = null;
-    protected int openFlowPort = 6633;
+    protected int openFlowPort = 6688;
     protected int workerThreads = 0;
 
 

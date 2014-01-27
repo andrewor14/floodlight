@@ -88,6 +88,12 @@ class OFChannelHandler
 
     private static final long DEFAULT_ROLE_TIMEOUT_MS = 10*1000; // 10 sec
 
+    public static final long DISCONNECT_THRESHOLD_LOW = 500*1000; // 0.50 ms
+    public static final long DISCONNECT_THRESHOLD_HIGH = 10*1000*1000; // 10 ms
+    public static long minDifference = Long.MAX_VALUE;
+    public static int numDisconnects = 0;
+    public static int numChannelHandlers = 0;
+
     private final Controller controller;
     private final Counters counters;
     private IOFSwitch sw;
@@ -106,7 +112,8 @@ class OFChannelHandler
      */
     private int handshakeTransactionIds = -1;
 
-
+    public long lastPacketInTime = -1;
+    public long lastPortModTime = -1;
 
     /**
      * When we remove a pending role request and set the role on the switch
@@ -337,6 +344,7 @@ class OFChannelHandler
         }
 
         /**
+                
          * Check if a pending role request has timed out.
          */
         void checkTimeout() {
@@ -873,11 +881,17 @@ class OFChannelHandler
             @Override
             void processOFPortStatus(OFChannelHandler h, OFPortStatus m)
                     throws IOException {
+                log.warn("###RECEIVED PORTMOD!!###");
+                h.lastPortModTime = System.nanoTime();
+                h.checkDifference();
                 handlePortStatusMessage(h, m, true);
             }
 
             @Override
             void processOFPacketIn(OFChannelHandler h, OFPacketIn m) throws IOException {
+                log.warn("***RECEIVED OFPACKETIN!!***");
+                h.lastPacketInTime = System.nanoTime();
+                h.checkDifference();
                 h.dispatchMessage(m);
             }
 
@@ -1301,6 +1315,8 @@ class OFChannelHandler
      * @param controller
      */
     OFChannelHandler(Controller controller) {
+        log.warn("\n\n HAI this is OFChannelHandler number "+OFChannelHandler.numChannelHandlers+"!\n\n");
+        OFChannelHandler.numChannelHandlers++;
         this.controller = controller;
         this.counters = controller.getCounters();
         this.roleChanger = new RoleChanger(DEFAULT_ROLE_TIMEOUT_MS);
@@ -1376,6 +1392,45 @@ class OFChannelHandler
         log.info("Disconnected switch {}", getSwitchInfoString());
     }
 
+    public void manuallyDisconnectSwitch() {
+        controller.removeSwitchChannel(this);
+        if (this.sw != null) {
+            controller.switchDisconnected(this.sw);
+            this.sw.setConnected(false);
+        }
+        log.info("MANUALLY disconnected switch {}", getSwitchInfoString());
+    }
+
+    public void checkDifference() {
+       if (lastPortModTime == -1 || lastPacketInTime == -1) {
+         return;
+       }
+       long difference = Math.abs(lastPortModTime - lastPacketInTime);
+       log.warn("--> difference is "+difference);
+       OFChannelHandler.minDifference = Math.min(OFChannelHandler.minDifference, difference);
+
+       long threshold = (OFChannelHandler.numDisconnects == 0) ?
+                        OFChannelHandler.DISCONNECT_THRESHOLD_LOW :
+                        OFChannelHandler.DISCONNECT_THRESHOLD_HIGH;
+
+       if (difference < threshold) {
+           log.warn("\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+                    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+                    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+                    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+                    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+                    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@   DISCONNECT   @@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+                    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+                    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+                    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n"+
+                    "@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@");
+           OFChannelHandler.numDisconnects++;
+           manuallyDisconnectSwitch();
+       }
+       log.warn("Number of disconnects "+OFChannelHandler.numDisconnects);
+       log.warn("Min difference "+OFChannelHandler.minDifference);
+    }
+
     @Override
     @LogMessageDocs({
         @LogMessageDoc(level="ERROR",
@@ -1427,8 +1482,8 @@ class OFChannelHandler
             counters.switchDisconnectReadTimeout.updateCounterWithFlush();
             ctx.getChannel().close();
         } else if (e.getCause() instanceof HandshakeTimeoutException) {
-            log.error("Disconnecting switch {}: failed to complete handshake",
-                      getSwitchInfoString());
+            log.error("Disconnecting switch {}: failed to complete handshake {}",
+                      getSwitchInfoString(), e);
             counters.switchDisconnectHandshakeTimeout.updateCounterWithFlush();
             ctx.getChannel().close();
         } else if (e.getCause() instanceof ClosedChannelException) {

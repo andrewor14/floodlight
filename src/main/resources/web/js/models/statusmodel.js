@@ -17,7 +17,7 @@
 window.Status = Backbone.Model.extend({    
     defaults: {
         host: 'localhost',
-        ofport: 6633,
+        ofport: 6688,
         uptime: 'unknown',
         free: 0,
         total: 0,
