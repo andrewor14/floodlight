@@ -485,7 +485,7 @@ class OFChannelHandler
         /**
          * We are waiting for a features reply message. Once we receive it
          * we send a SetConfig request, barrier, and GetConfig request.
-         * Next stats is WAIT_CONFIG_REPLY or WAIT_SET_L2_TABLE_REPLY
+         * Next state is WAIT_CONFIG_REPLY or WAIT_SET_L2_TABLE_REPLY
          */
         WAIT_FEATURES_REPLY(false) {
             @Override
